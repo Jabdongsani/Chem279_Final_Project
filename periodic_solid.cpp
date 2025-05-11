@@ -335,10 +335,17 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
 
 // Solve generalized eigenvalue problem for k-point
 arma::vec solve_k_eigenvalue(const arma::cx_mat &H_k, const arma::cx_mat &S_k) {
-    arma::cx_vec eigvals;
+    arma::vec eigvals;
     arma::cx_mat eigvecs;
-    arma::eig_gen(eigvals, eigvecs, S_k.i() * H_k);
-    return arma::real(eigvals);
+    // 비직교 Overlap 행렬 S_k의 실수 부분 사용
+    // (보통 S_k는 실수지만, Bloch phase 적용 시 복소수 생길 수 있음)
+    arma::mat S_real = arma::real(S_k);
+
+    arma::cx_mat H_copy = H_k;
+    // 일반화된 고유값 문제 안정적으로 풀기
+    solve_eigenvalue(const_cast<arma::cx_mat&>(H_k), S_real, eigvals, eigvecs);
+
+    return eigvals;
 }
 
 // Compute band structure along a k-path
@@ -436,6 +443,8 @@ arma::mat solve_eigenvalue(arma::cx_mat &H,arma::mat &S, arma::vec &eigvals, arm
     // transform Hamiltonian: H' = X^T H X
     // we have orthonormal basis where overlap is the identity
     arma::cx_mat H_prime = X.t() * H * X;
+
+    H_prime = 0.5 * (H_prime + H_prime.t());  // make it symmetric (Hermitian)
 
     // solve standard eigenvalue problem for H'
     arma::vec tmp_eigvals;
