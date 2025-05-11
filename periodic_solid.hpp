@@ -60,7 +60,7 @@ double compute_double_summation(int l_A, int l_B, double R_P, double R_A, double
 
 double primitive_overlap_3D(const basis_function &bfA, int exp_a, const basis_function &bfB, int exp_b); 
 
-double contracted_overlap(const basis_function &bfA, const basis_function &bfB, double cutoff_radius = 9.0);
+double contracted_overlap(const basis_function &bfA, const basis_function &bfB, const std::array<double, 3> &R_shift = {0.0, 0.0, 0.0}, double cutoff_radius = 9.0);
 
 void build_matrices(const std::vector<basis_function> &basis,
                     arma::mat &S, arma::cx_mat &H,

@@ -17,10 +17,6 @@ std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path) {
         throw std::runtime_error("File path does not exist!");
     }
 
-// 두가지 제안이 있음
-// 1. .in file을 우리가 쓸 수 있는대로 manually 수정
-// 2. 그걸 하는 python script를 짜서, .in file을 읽고, 우리가 원하는 형태로 변환해서 저장
-
     int atom_count, dim;
     infile >> atom_count >> dim;
 
@@ -54,6 +50,7 @@ std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path) {
 // Get STO basis parameters for an element and orbital
 val_exp_coeff get_valence_data(std::string element, std::string orbital_type) {
     val_exp_coeff data;
+    // divide by 3.751
     if (element == "H") {
         if (orbital_type == "1s") {
             data.exps = {3.42525091, 0.62391373, 0.16885540};
@@ -63,7 +60,7 @@ val_exp_coeff get_valence_data(std::string element, std::string orbital_type) {
     } else if (element == "C") {
         if (orbital_type == "2s") {
             data.exps = {2.037}; // C-sp from Table I
-            data.coeffs = {0.741};
+            data.coeffs = {0.1975};
             data.onsite_energy = -20.316;
         } else if (orbital_type == "2p") {
             data.exps = {1.777, 3.249};
@@ -125,11 +122,11 @@ std::vector<basis_function> build_basis_set(std::vector<Atom> atoms) {
             auto shell_functions = cartesian_functions(orb);
             for (const auto &sf : shell_functions) {
                 basis_function bf;
-                // atom x, y, z coordinates 정하기 from atom으로부터
+
                 bf.x = atom.x;
                 bf.y = atom.y;
                 bf.z = atom.z;
-                // l, m, n 은 shell_functions 에 저장된 걸 가져옴
+
                 bf.l = sf[0];
                 bf.m = sf[1];
                 bf.n = sf[2];
@@ -252,19 +249,25 @@ double primitive_overlap_3D(const basis_function &bfA, int exp_a, const basis_fu
 }
 
 // Compute contracted overlap
-double contracted_overlap(const basis_function &bfA, const basis_function &bfB, double cutoff_radius) {
+double contracted_overlap(const basis_function &bfA, const basis_function &bfB, const std::array<double, 3> &R_shift, double cutoff_radius) {
     // Check distance between centers
-    double dx = bfA.x - bfB.x;
-    double dy = bfA.y - bfB.y;
-    double dz = bfA.z - bfB.z;
+    double dx = bfA.x - (bfB.x + R_shift[0]);
+    double dy = bfA.y - (bfB.y + R_shift[1]);
+    double dz = bfA.z - (bfB.z + R_shift[2]);
     double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
     if (distance > cutoff_radius) return 0.0; // Apply cutoff
 
     double S = 0.0;
     for (size_t a = 0; a < bfA.exps.size(); ++a) {
         for (size_t b = 0; b < bfB.exps.size(); ++b) {
-            double overlap_ab = primitive_overlap_3D(bfA, a, bfB, b);
-            S += bfA.coeffs[a] * bfB.coeffs[b] * bfA.norms[a] * bfB.norms[b] * overlap_ab;
+            std::array<double, 3> RA = {bfA.x, bfA.y, bfA.z};
+            std::array<double, 3> RB = {bfB.x + R_shift[0], bfB.y + R_shift[1], bfB.z + R_shift[2]};
+            auto RP = compute_product_center(RA, bfA.exps[a], RB, bfB.exps[b]);
+            double Sx = compute_double_summation(bfA.l, bfB.l, RP[0], RA[0], RB[0], bfA.exps[a], bfB.exps[b]);
+            double Sy = compute_double_summation(bfA.m, bfB.m, RP[1], RA[1], RB[1], bfA.exps[a], bfB.exps[b]);
+            double Sz = compute_double_summation(bfA.n, bfB.n, RP[2], RA[2], RB[2], bfA.exps[a], bfB.exps[b]);
+            double overlap = Sx * Sy * Sz;
+            S += bfA.coeffs[a] * bfB.coeffs[b] * bfA.norms[a] * bfB.norms[b] * overlap;
         }
     }
     return S;
@@ -279,10 +282,10 @@ void build_matrices(const std::vector<basis_function> &basis,
     H.zeros(N, N);
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j <= i; ++j) {
-            double s_ij = contracted_overlap(basis[i], basis[j], cutoff_radius);
+            double s_ij = contracted_overlap(basis[i], basis[j]);
             S(i, j) = S(j, i) = s_ij;
             if (i == j) {
-                H(i, i) = basis[i].onsite_energy;
+                H(i, i) = basis[i].onsite_energy; // diagonal은 emprical onsite energy
             } else {
                 double h_ij = 0.5 * K_eht * (basis[i].onsite_energy + basis[j].onsite_energy) * s_ij;
                 H(i, j) = H(j, i) = h_ij;
@@ -301,7 +304,7 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
     S_k.zeros(N, N);
     H_k.zeros(N, N);
     // Consider neighboring unit cells within cutoff
-    int n_cells = 3; // Check cells from -n to +n in each direction
+    int n_cells = 1; // Check cells from -n to +n in each direction
     for (int n1 = -n_cells; n1 <= n_cells; ++n1) {
         for (int n2 = (lattice.dim >= 2 ? -n_cells : 0); n2 <= (lattice.dim >= 2 ? n_cells : 0); ++n2) {
             for (int n3 = (lattice.dim == 3 ? -n_cells : 0); n3 <= (lattice.dim == 3 ? n_cells : 0); ++n3) {
@@ -318,7 +321,7 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
                     bfB.y += R_m[1];
                     bfB.z += R_m[2];
                     for (int j = 0; j < N; ++j) {
-                        double s_ij = contracted_overlap(basis[j], bfB, cutoff_radius);
+                        double s_ij = contracted_overlap(basis[j], basis[i], R_m, cutoff_radius);
                         S_k(j, i) += bloch_factor * s_ij;
                         if (i == j && n1 == 0 && n2 == 0 && n3 == 0) {
                             H_k(i, i) = basis[i].onsite_energy;
@@ -336,13 +339,11 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
 // Solve generalized eigenvalue problem for k-point
 arma::vec solve_k_eigenvalue(const arma::cx_mat &H_k, const arma::cx_mat &S_k) {
     arma::vec eigvals;
-    arma::cx_mat eigvecs;
-    // 비직교 Overlap 행렬 S_k의 실수 부분 사용
-    // (보통 S_k는 실수지만, Bloch phase 적용 시 복소수 생길 수 있음)
+
     arma::mat S_real = arma::real(S_k);
 
     arma::cx_mat H_copy = H_k;
-    // 일반화된 고유값 문제 안정적으로 풀기
+
     solve_eigenvalue(const_cast<arma::cx_mat&>(H_k), S_real, eigvals, eigvecs);
 
     return eigvals;
@@ -356,13 +357,15 @@ void compute_band_structure(const std::vector<basis_function> &basis,
                             double K_eht) {
     std::ofstream outfile("band_structure.dat");
     int N = basis.size();
+    double fermi_shift = -13.7;  // fermi level shift (eV)
     arma::cx_mat S_k(N, N), H_k(N, N);
     for (size_t i = 0; i < k_path.size(); ++i) {
         apply_bloch_phase(basis, lattice, k_path[i], S_k, H_k, K_eht);
         arma::vec energies = solve_k_eigenvalue(H_k, S_k);
+
         outfile << i << " ";
         for (const auto &e : energies) {
-            outfile << e << " ";
+            outfile << (e - fermi_shift) << " ";
         }
         outfile << std::endl;
     }
@@ -425,7 +428,15 @@ arma::mat solve_eigenvalue(arma::cx_mat &H,arma::mat &S, arma::vec &eigvals, arm
     // diagonalize S to get its eigenvalues and eigenvectors
     arma::vec s_eigvals;
     arma::mat s_eigvecs;
-    arma::eig_sym(s_eigvals, s_eigvecs, S);
+
+
+    arma::eig_sym(s_eigvals, s_eigvecs, S); 
+
+    // Regularize small eigenvalues to avoid instability
+    /*double eps = 1e-6;
+    for (size_t i = 0; i < s_eigvals.n_elem; ++i) {
+        if (s_eigvals(i) < eps) s_eigvals(i) = eps;
+    }*/
 
     // build X = S^(-1/2) = U diag(1/sqrt(sigma)) U^T
     // columns of X will be used to transform the basis so that the overlap matrix becomes the identity
