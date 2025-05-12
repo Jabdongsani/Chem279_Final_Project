@@ -17,10 +17,6 @@ std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path) {
         throw std::runtime_error("File path does not exist!");
     }
 
-// 두가지 제안이 있음
-// 1. .in file을 우리가 쓸 수 있는대로 manually 수정
-// 2. 그걸 하는 python script를 짜서, .in file을 읽고, 우리가 원하는 형태로 변환해서 저장
-
     int atom_count, dim;
     infile >> atom_count >> dim;
 
