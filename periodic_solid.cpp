@@ -10,6 +10,8 @@
 
 #include "periodic_solid.hpp"
 
+
+
 // Read input file with lattice vectors and atomic coordinates
 std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path) {
     std::ifstream infile(file_path);
@@ -22,15 +24,27 @@ std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path) {
 
     Lattice lattice;
     lattice.dim = dim;
-    // Read lattice vectors
+
+    // Read and convert lattice vectors to bohr
     infile >> lattice.a1[0] >> lattice.a1[1] >> lattice.a1[2];
+    lattice.a1[0] *= angstrom_to_bohr;
+    lattice.a1[1] *= angstrom_to_bohr;
+    lattice.a1[2] *= angstrom_to_bohr;
+
     if (dim >= 2) {
         infile >> lattice.a2[0] >> lattice.a2[1] >> lattice.a2[2];
+        lattice.a2[0] *= angstrom_to_bohr;
+        lattice.a2[1] *= angstrom_to_bohr;
+        lattice.a2[2] *= angstrom_to_bohr;
     } else {
         lattice.a2 = {0.0, 0.0, 0.0};
     }
+
     if (dim == 3) {
         infile >> lattice.a3[0] >> lattice.a3[1] >> lattice.a3[2];
+        lattice.a3[0] *= angstrom_to_bohr;
+        lattice.a3[1] *= angstrom_to_bohr;
+        lattice.a3[2] *= angstrom_to_bohr;
     } else {
         lattice.a3 = {0.0, 0.0, 0.0};
     }
@@ -40,12 +54,22 @@ std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path) {
         int element_int;
         Atom atom;
         infile >> element_int >> atom.x >> atom.y >> atom.z;
-        atom.element = (element_int == 1) ? "H" : (element_int == 6) ? "C" : (element_int == 14) ? "Si" : "Unknown";
+
+        // Convert position from angstrom to bohr
+        atom.x *= angstrom_to_bohr;
+        atom.y *= angstrom_to_bohr;
+        atom.z *= angstrom_to_bohr;
+
+        atom.element = (element_int == 1) ? "H" :
+                       (element_int == 6) ? "C" :
+                       (element_int == 14) ? "Si" : "Unknown";
+
         atoms.push_back(atom);
     }
 
     return {atoms, lattice};
 }
+
 
 // Get STO basis parameters for an element and orbital
 val_exp_coeff get_valence_data(std::string element, std::string orbital_type) {
@@ -60,7 +84,7 @@ val_exp_coeff get_valence_data(std::string element, std::string orbital_type) {
     } else if (element == "C") {
         if (orbital_type == "2s") {
             data.exps = {2.037}; // C-sp from Table I
-            data.coeffs = {0.1975};
+            data.coeffs = {0.741};
             data.onsite_energy = -20.316;
         } else if (orbital_type == "2p") {
             data.exps = {1.777, 3.249};
@@ -282,7 +306,7 @@ void build_matrices(const std::vector<basis_function> &basis,
     H.zeros(N, N);
     for (int i = 0; i < N; ++i) {
         for (int j = 0; j <= i; ++j) {
-            double s_ij = contracted_overlap(basis[i], basis[j]);
+            double s_ij = contracted_overlap(basis[i], basis[j], {0.0, 0.0, 0.0}, cutoff_radius);
             S(i, j) = S(j, i) = s_ij;
             if (i == j) {
                 H(i, i) = basis[i].onsite_energy; // diagonal은 emprical onsite energy
@@ -303,26 +327,38 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
     int N = basis.size();
     S_k.zeros(N, N);
     H_k.zeros(N, N);
-    // Consider neighboring unit cells within cutoff
-    int n_cells = 1; // Check cells from -n to +n in each direction
+
+    int n_cells = 3; // number of neighbor cells in each direction
+
     for (int n1 = -n_cells; n1 <= n_cells; ++n1) {
         for (int n2 = (lattice.dim >= 2 ? -n_cells : 0); n2 <= (lattice.dim >= 2 ? n_cells : 0); ++n2) {
             for (int n3 = (lattice.dim == 3 ? -n_cells : 0); n3 <= (lattice.dim == 3 ? n_cells : 0); ++n3) {
+
                 std::array<double, 3> R_m = {
                     n1 * lattice.a1[0] + n2 * lattice.a2[0] + n3 * lattice.a3[0],
                     n1 * lattice.a1[1] + n2 * lattice.a2[1] + n3 * lattice.a3[1],
                     n1 * lattice.a1[2] + n2 * lattice.a2[2] + n3 * lattice.a3[2]
                 };
-                double phase = k_point[0] * R_m[0] + k_point[1] * R_m[1] + k_point[2] * R_m[2];
-                std::complex<double> bloch_factor = std::exp(std::complex<double>(0.0, phase));
+
                 for (int i = 0; i < N; ++i) {
-                    basis_function bfB = basis[i];
-                    bfB.x += R_m[0];
-                    bfB.y += R_m[1];
-                    bfB.z += R_m[2];
+                    std::array<double, 3> R_i = {basis[i].x, basis[i].y, basis[i].z};
+
                     for (int j = 0; j < N; ++j) {
+                        std::array<double, 3> R_j = {
+                            basis[j].x + R_m[0],
+                            basis[j].y + R_m[1],
+                            basis[j].z + R_m[2]
+                        };
+
+                        // phase = k · (R_i - R_j)
+                        double phase = k_point[0] * (R_i[0] - R_j[0]) +
+                                       k_point[1] * (R_i[1] - R_j[1]) +
+                                       k_point[2] * (R_i[2] - R_j[2]);
+                        std::complex<double> bloch_factor = std::exp(std::complex<double>(0.0, phase));
+
                         double s_ij = contracted_overlap(basis[j], basis[i], R_m, cutoff_radius);
                         S_k(j, i) += bloch_factor * s_ij;
+
                         if (i == j && n1 == 0 && n2 == 0 && n3 == 0) {
                             H_k(i, i) = basis[i].onsite_energy;
                         } else {
@@ -336,9 +372,12 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
     }
 }
 
+
+
 // Solve generalized eigenvalue problem for k-point
 arma::vec solve_k_eigenvalue(const arma::cx_mat &H_k, const arma::cx_mat &S_k) {
     arma::vec eigvals;
+    arma::cx_mat eigvecs;
 
     arma::mat S_real = arma::real(S_k);
 
@@ -357,7 +396,7 @@ void compute_band_structure(const std::vector<basis_function> &basis,
                             double K_eht) {
     std::ofstream outfile("band_structure.dat");
     int N = basis.size();
-    double fermi_shift = -13.7;  // fermi level shift (eV)
+    // double fermi_shift = -13.7;  // fermi level shift (eV)
     arma::cx_mat S_k(N, N), H_k(N, N);
     for (size_t i = 0; i < k_path.size(); ++i) {
         apply_bloch_phase(basis, lattice, k_path[i], S_k, H_k, K_eht);
@@ -365,7 +404,7 @@ void compute_band_structure(const std::vector<basis_function> &basis,
 
         outfile << i << " ";
         for (const auto &e : energies) {
-            outfile << (e - fermi_shift) << " ";
+            outfile << e << " ";
         }
         outfile << std::endl;
     }
@@ -428,7 +467,6 @@ arma::mat solve_eigenvalue(arma::cx_mat &H,arma::mat &S, arma::vec &eigvals, arm
     // diagonalize S to get its eigenvalues and eigenvectors
     arma::vec s_eigvals;
     arma::mat s_eigvecs;
-
 
     arma::eig_sym(s_eigvals, s_eigvecs, S); 
 

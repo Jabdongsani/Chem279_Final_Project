@@ -35,8 +35,9 @@ int main(int argc, char **argv) {
     compute_normalization_constants(basis_functions);
 
     // Set EHT parameters
-    double K_eht = (atoms[0].element == "C") ? 2.8 : 2.3; // 2.8 for graphene, 2.3 for silicon
-    double cutoff_radius = 9.0; // Angstrom
+    //double K_eht = (atoms[0].element == "C") ? 2.8 : 2.3; // 2.8 for graphene, 2.3 for silicon
+    double K_eht = 2.8;
+    double cutoff_radius = 9.0 * angstrom_to_bohr; // Angstrom
 
     // Compute band structure for periodic systems
     if (lattice.dim > 0) {
