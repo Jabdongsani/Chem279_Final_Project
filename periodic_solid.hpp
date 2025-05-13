@@ -6,6 +6,11 @@
 #include <array>
 #include <armadillo>
 
+
+const double angstrom_to_bohr = 1.8897259886;
+const double cutoff_radius_bohr = 9.0 * angstrom_to_bohr;
+// const double k_eht = 5.0;
+
 struct Atom {
     std::string element;
     double x, y, z;
@@ -60,17 +65,17 @@ double compute_double_summation(int l_A, int l_B, double R_P, double R_A, double
 
 double primitive_overlap_3D(const basis_function &bfA, int exp_a, const basis_function &bfB, int exp_b); 
 
-double contracted_overlap(const basis_function &bfA, const basis_function &bfB, const std::array<double, 3> &R_shift = {0.0, 0.0, 0.0}, double cutoff_radius = 9.0);
+double contracted_overlap(const basis_function &bfA, const basis_function &bfB, const std::array<double, 3> &R_shift = {0.0, 0.0, 0.0}, double cutoff_radius = cutoff_radius_bohr);
 
 void build_matrices(const std::vector<basis_function> &basis,
                     arma::mat &S, arma::cx_mat &H,
-                    double K_eht = 2.8, double cutoff_radius = 9.0);
+                    double K_eht = 2.8, double cutoff_radius = cutoff_radius_bohr);
 
 void apply_bloch_phase(const std::vector<basis_function> &basis,
                        const Lattice &lattice,
                        const std::array<double, 3> &k_point,
                        arma::cx_mat &S_k, arma::cx_mat &H_k,
-                       double K_eht = 2.8, double cutoff_radius = 9.0);
+                       double K_eht = 5.0, double cutoff_radius = cutoff_radius_bohr);
 
 arma::vec solve_k_eigenvalue(const arma::cx_mat &H_k, const arma::cx_mat &S_k);
 
@@ -78,9 +83,9 @@ void compute_band_structure(const std::vector<basis_function> &basis,
                             const Lattice &lattice,
                             const std::vector<std::array<double, 3>> &k_path,
                             const std::vector<std::string> &k_labels,
-                            double K_eht = 2.8);
+                            double K_eht = 5.0);
 
-std::pair<std::vector<std::array<double, 3>>, std::vector<std::string>> get_graphene_k_path(double a_cc = 1.44);
+std::pair<std::vector<std::array<double, 3>>, std::vector<std::string>> get_graphene_k_path(double a_cc = 1.44 * angstrom_to_bohr);
 
 arma::mat solve_eigenvalue(arma::cx_mat &H,arma::mat &S, arma::vec &eigvals, arma::cx_mat &eigvecs);
 
