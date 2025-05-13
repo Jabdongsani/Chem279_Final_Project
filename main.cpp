@@ -10,6 +10,13 @@
 
 #include "periodic_solid.hpp"
 
+void save_vector(const std::string& filename, const std::vector<double>& vec) {
+    std::ofstream out(filename);
+    for (const auto& v : vec) {
+        out << v << std::endl;
+    }
+}
+
 
 int main(int argc, char **argv) {
     if (argc < 2) {
@@ -36,12 +43,21 @@ int main(int argc, char **argv) {
 
     // Set EHT parameters
     //double K_eht = (atoms[0].element == "C") ? 2.8 : 2.3; // 2.8 for graphene, 2.3 for silicon
-    double K_eht = 2.8;
+    double K_eht = 2.2;
     double cutoff_radius = 9.0 * angstrom_to_bohr; // Angstrom
+
+    std::vector<double> k_dist, k_ticks;
+    double a_cc = 1.42 * angstrom_to_bohr;  // bohr, graphene C–C bond length
 
     // Compute band structure for periodic systems
     if (lattice.dim > 0) {
-        auto [k_path, k_labels] = get_graphene_k_path();
+        std::vector<double> k_dist, k_ticks;
+        double a_cc = 1.42;  // Angstrom, graphene C–C bond length
+
+        auto [k_path, k_labels] = get_graphene_k_path(a_cc, k_dist, k_ticks);
+
+        save_vector("k_dist.txt", k_dist);
+        save_vector("k_ticks.txt", k_ticks);
         compute_band_structure(basis_functions, lattice, k_path, k_labels, K_eht);
     } else {
         // For molecules, compute as before

@@ -87,9 +87,14 @@ val_exp_coeff get_valence_data(std::string element, std::string orbital_type) {
             data.coeffs = {0.741};
             data.onsite_energy = -20.316;
         } else if (orbital_type == "2p") {
+            data.exps = {0.88, 1.3};
+            data.coeffs = {0.640, 0.412};
+            data.onsite_energy = -13.670;
+            /* 
             data.exps = {1.777, 3.249};
             data.coeffs = {0.640, 0.412};
             data.onsite_energy = -13.670;
+            */
         }
     } else if (element == "Si") {
         if (orbital_type == "3s") {
@@ -324,14 +329,17 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
                        const std::array<double, 3> &k_point,
                        arma::cx_mat &S_k, arma::cx_mat &H_k,
                        double K_eht, double cutoff_radius) {
-    int N = basis.size();
+    int N = basis.size(); // 우리 경우에는 8
+    // overlap과 hamiltonian matrix 0으로 reset
     S_k.zeros(N, N);
     H_k.zeros(N, N);
 
-    int n_cells = 3; // number of neighbor cells in each direction
+    int n_cells = 1; // number of neighbor cells in each direction
 
-    for (int n1 = -n_cells; n1 <= n_cells; ++n1) {
+    for (int n1 = -n_cells; n1 <= n_cells; ++n1) { // 격자의 주기성 고려, 나부터 양쪽으로 n_cells 만큼
+        // y dimension 있으면 또 똑같이 n_cells 만큼 
         for (int n2 = (lattice.dim >= 2 ? -n_cells : 0); n2 <= (lattice.dim >= 2 ? n_cells : 0); ++n2) {
+            // z dimension 있으면 또 똑같이 n_cells 만큼
             for (int n3 = (lattice.dim == 3 ? -n_cells : 0); n3 <= (lattice.dim == 3 ? n_cells : 0); ++n3) {
 
                 std::array<double, 3> R_m = {
@@ -354,10 +362,23 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
                         double phase = k_point[0] * (R_i[0] - R_j[0]) +
                                        k_point[1] * (R_i[1] - R_j[1]) +
                                        k_point[2] * (R_i[2] - R_j[2]);
-                        std::complex<double> bloch_factor = std::exp(std::complex<double>(0.0, phase));
+                        if (i == 0 && j == 0) {
+                        // std::cout << "k = (" << k_point[0] << ", " << k_point[1] << ", " << k_point[2] << "), ";
+                        // std::cout << "phase = " << phase << std::endl;
+}
 
-                        double s_ij = contracted_overlap(basis[j], basis[i], R_m, cutoff_radius);
+                        // std::exp(std::complex<double>(0.0, phase)) 
+                        // → std::complex<double>(cos(phase), sin(phase)) 
+                        std::complex<double> bloch_factor = std::exp(std::complex<double>(0.0, phase)); // 여기가 i 부분
+
+                        double s_ij = contracted_overlap(basis[j], basis[i], R_m, cutoff_radius); // overlap을 구함
+                        // bloch phase를 곱해줌
                         S_k(j, i) += bloch_factor * s_ij;
+                        // if (std::abs(s_ij) > 1e-4 && i != j && n1 == 0 && n2 == 0 && n3 == 0) {
+                        // std::cout << "[s_ij] i=" << i << ", j=" << j
+                        // << ", s_ij=" << s_ij
+                        // << ", h_ij=" << 0.5 * K_eht * (basis[i].onsite_energy + basis[j].onsite_energy) * s_ij
+                        // << std::endl;
 
                         if (i == j && n1 == 0 && n2 == 0 && n3 == 0) {
                             H_k(i, i) = basis[i].onsite_energy;
@@ -365,6 +386,10 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
                             double h_ij = 0.5 * K_eht * (basis[i].onsite_energy + basis[j].onsite_energy) * s_ij;
                             H_k(j, i) += bloch_factor * h_ij;
                         }
+                        // if (i != j && std::abs(H_k(j, i)) > 1e-3 && n1 == 0 && n2 == 0 && n3 == 0) {
+                        // std::cout << "[H_k] j=" << j << ", i=" << i
+                        // << ", H_k=" << H_k(j, i) << std::endl;
+
                     }
                 }
             }
@@ -413,53 +438,99 @@ void compute_band_structure(const std::vector<basis_function> &basis,
 }
 
 // Define k-path for graphene (M -> Gamma -> K -> M)
-std::pair<std::vector<std::array<double, 3>>, std::vector<std::string>> get_graphene_k_path(double a_cc) {
-    double a = a_cc * std::sqrt(3);
-    // Reciprocal lattice vectors
-    double b1x = 2 * M_PI / a;
-    double b1y = -2 * M_PI / (a * std::sqrt(3));
-    double b2x = 0.0;
-    double b2y = 4 * M_PI / (a * std::sqrt(3));
-    // High-symmetry points
+#include <vector>
+#include <array>
+#include <string>
+#include <cmath>
+#include <utility>
+
+std::pair<std::vector<std::array<double, 3>>, std::vector<std::string>>
+get_graphene_k_path(double a_cc, std::vector<double>& k_dist, std::vector<double>& k_ticks) {
+    // 1. Real-space lattice vectors for graphene
+    std::array<double, 3> a1 = {a_cc * 1.5,  a_cc * std::sqrt(3) / 2, 0.0};
+    std::array<double, 3> a2 = {a_cc * 1.5, -a_cc * std::sqrt(3) / 2, 0.0};
+
+    // 2. Reciprocal lattice vectors using cross product
+    double volume = a1[0] * a2[1] - a1[1] * a2[0];  // 2D cross product z-component
+    std::array<double, 3> b1 = {
+        2 * M_PI *  a2[1] / volume,
+        -2 * M_PI * a2[0] / volume,
+        0.0
+    };
+    std::array<double, 3> b2 = {
+        -2 * M_PI * a1[1] / volume,
+        2 * M_PI *  a1[0] / volume,
+        0.0
+    };
+
+    // 3. High-symmetry points
     std::array<double, 3> Gamma = {0.0, 0.0, 0.0};
-    std::array<double, 3> K = {b1x / 3 + b2x / 3, b1y / 3 + b2y / 3, 0.0};
-    std::array<double, 3> M = {b1x / 2, b1y / 2, 0.0};
-    // Create k-path
+    std::array<double, 3> K = {
+        (b1[0] + b2[0]) / 3,
+        (b1[1] + b2[1]) / 3,
+        0.0
+    };
+    std::array<double, 3> M = {
+        (b1[0]) / 2,
+        (b1[1]) / 2,
+        0.0
+    };
+
+    // 4. Interpolation helper
+    auto interpolate = [](const std::array<double, 3>& start,
+                          const std::array<double, 3>& end,
+                          int n_steps,
+                          std::vector<std::array<double, 3>>& k_path,
+                          std::vector<std::string>& labels,
+                          const std::string& label_start,
+                          std::vector<double>& k_dist,
+                          std::vector<double>& k_ticks,
+                          bool include_last = true) {
+        double accum_dist = k_dist.empty() ? 0.0 : k_dist.back();
+
+        for (int i = 0; i <= n_steps; ++i) {
+            if (i == n_steps && !include_last) break;
+            double t = static_cast<double>(i) / n_steps;
+            std::array<double, 3> k = {
+                (1 - t) * start[0] + t * end[0],
+                (1 - t) * start[1] + t * end[1],
+                0.0
+            };
+            k_path.push_back(k);
+
+            // 누적 거리 계산
+            if (!k_dist.empty()) {
+                const auto& prev = k_path[k_path.size() - 2];
+                double dk = std::sqrt(
+                    std::pow(k[0] - prev[0], 2) +
+                    std::pow(k[1] - prev[1], 2));
+                accum_dist += dk;
+            }
+            k_dist.push_back(accum_dist);
+
+            if (i == 0 && !label_start.empty()) {
+                labels.push_back(label_start);
+                k_ticks.push_back(accum_dist);
+            } else {
+                labels.push_back("");
+            }
+        }
+    };
+
+    // 5. Build path M → Γ → K → M
     std::vector<std::array<double, 3>> k_path;
     std::vector<std::string> k_labels;
+    k_dist.clear();
+    k_ticks.clear();
+
     int n_points = 50;
-    // M -> Gamma
-    for (int i = 0; i <= n_points; ++i) {
-        double t = static_cast<double>(i) / n_points;
-        k_path.push_back({
-            M[0] + t * (Gamma[0] - M[0]),
-            M[1] + t * (Gamma[1] - M[1]),
-            0.0
-        });
-        k_labels.push_back(i == 0 ? "M" : "");
-    }
-    // Gamma -> K
-    for (int i = 1; i <= n_points; ++i) {
-        double t = static_cast<double>(i) / n_points;
-        k_path.push_back({
-            Gamma[0] + t * (K[0] - Gamma[0]),
-            Gamma[1] + t * (K[1] - Gamma[1]),
-            0.0
-        });
-        k_labels.push_back(i == n_points ? "K" : "");
-    }
-    // K -> M
-    for (int i = 1; i <= n_points; ++i) {
-        double t = static_cast<double>(i) / n_points;
-        k_path.push_back({
-            K[0] + t * (M[0] - K[0]),
-            K[1] + t * (M[1] - K[1]),
-            0.0
-        });
-        k_labels.push_back(i == n_points ? "M" : "");
-    }
+    interpolate(M, Gamma, n_points, k_path, k_labels, "M", k_dist, k_ticks);
+    interpolate(Gamma, K, n_points, k_path, k_labels, "Γ", k_dist, k_ticks);
+    interpolate(K, M, n_points, k_path, k_labels, "K", k_dist, k_ticks);
+
     return {k_path, k_labels};
 }
+
 
 // SOLVE EIGENVALUE PROBLEM
 arma::mat solve_eigenvalue(arma::cx_mat &H,arma::mat &S, arma::vec &eigvals, arma::cx_mat &eigvecs)

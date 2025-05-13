@@ -38,6 +38,8 @@ struct basis_function {
     std::string element; // Associated element
 };
 
+
+
 std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path);
 
 val_exp_coeff get_valence_data(std::string element, std::string orbital_type);
@@ -84,6 +86,9 @@ void compute_band_structure(const std::vector<basis_function> &basis,
                             const std::vector<std::array<double, 3>> &k_path,
                             const std::vector<std::string> &k_labels,
                             double K_eht = 5.0);
+
+std::pair<std::vector<std::array<double, 3>>, std::vector<std::string>>
+get_graphene_k_path(double a_cc, std::vector<double>& k_dist, std::vector<double>& k_ticks);
 
 std::pair<std::vector<std::array<double, 3>>, std::vector<std::string>> get_graphene_k_path(double a_cc = 1.44 * angstrom_to_bohr);
 
