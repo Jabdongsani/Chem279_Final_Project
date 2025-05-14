@@ -42,6 +42,8 @@ struct basis_function {
 
 std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path);
 
+std::pair<std::vector<Atom>, Lattice> generate_cnt_structure(int n, int m, double a_cc = 1.42);
+
 val_exp_coeff get_valence_data(std::string element, std::string orbital_type);
 
 std::vector<std::array<int, 3>> cartesian_functions(std::string orbital_type);

@@ -10,61 +10,63 @@
 
 #include "periodic_solid.hpp"
 
-
-
-// Read input file with lattice vectors and atomic coordinates
-std::pair<std::vector<Atom>, Lattice> read_input(std::string file_path) {
-    std::ifstream infile(file_path);
-    if (!infile.is_open()) {
-        throw std::runtime_error("File path does not exist!");
-    }
-
-    int atom_count, dim;
-    infile >> atom_count >> dim;
-
-    Lattice lattice;
-    lattice.dim = dim;
-
-    // Read and convert lattice vectors to bohr
-    infile >> lattice.a1[0] >> lattice.a1[1] >> lattice.a1[2];
-    lattice.a1[0] *= angstrom_to_bohr;
-    lattice.a1[1] *= angstrom_to_bohr;
-    lattice.a1[2] *= angstrom_to_bohr;
-
-    if (dim >= 2) {
-        infile >> lattice.a2[0] >> lattice.a2[1] >> lattice.a2[2];
-        lattice.a2[0] *= angstrom_to_bohr;
-        lattice.a2[1] *= angstrom_to_bohr;
-        lattice.a2[2] *= angstrom_to_bohr;
-    } else {
-        lattice.a2 = {0.0, 0.0, 0.0};
-    }
-
-    if (dim == 3) {
-        infile >> lattice.a3[0] >> lattice.a3[1] >> lattice.a3[2];
-        lattice.a3[0] *= angstrom_to_bohr;
-        lattice.a3[1] *= angstrom_to_bohr;
-        lattice.a3[2] *= angstrom_to_bohr;
-    } else {
-        lattice.a3 = {0.0, 0.0, 0.0};
-    }
-
+// for CNT generation
+std::pair<std::vector<Atom>, Lattice> generate_cnt_structure(int n, int m, double a_cc) {
     std::vector<Atom> atoms;
-    for (int i = 0; i < atom_count; ++i) {
-        int element_int;
-        Atom atom;
-        infile >> element_int >> atom.x >> atom.y >> atom.z;
+    Lattice lattice;
 
-        // Convert position from angstrom to bohr
-        atom.x *= angstrom_to_bohr;
-        atom.y *= angstrom_to_bohr;
-        atom.z *= angstrom_to_bohr;
+    // 1. graphene lattice vectors
+    arma::vec a1 = {sqrt(3) * a_cc, 0.0, 0.0};
+    arma::vec a2 = {sqrt(3)/2 * a_cc, 3.0/2 * a_cc, 0.0};
+    arma::vec delta = {0.0, a_cc, 0.0};  // B sublattice offset
 
-        atom.element = (element_int == 1) ? "H" :
-                       (element_int == 6) ? "C" :
-                       (element_int == 14) ? "Si" : "Unknown";
+    // 2. chiral vector and tube radius
+    arma::vec Ch = n * a1 + m * a2;
+    double Ch_len = arma::norm(Ch);
+    double radius = Ch_len / (2.0 * M_PI);
 
-        atoms.push_back(atom);
+    // 3. translation vector T
+    int dR = std::gcd(n, m);
+    int t1 = m / dR, t2 = -n / dR;
+    arma::vec T = t1 * a1 + t2 * a2;
+    double T_len = arma::norm(T);
+
+    // 4. define lattice
+    lattice.a1 = {0.0, 0.0, T_len * angstrom_to_bohr}; // CNT 방향을 z축으로
+    lattice.a2 = {0.0, 0.0, 0.0};
+    lattice.a3 = {0.0, 0.0, 0.0};
+    lattice.dim = 1;
+
+    // 5. 반복 범위
+    int N1 = n + m; // 충분히 큰 범위
+    int N2 = n + m;
+
+    for (int i = -N1; i <= N1; ++i) {
+        for (int j = -N2; j <= N2; ++j) {
+            for (int sub = 0; sub < 2; ++sub) {
+                arma::vec r2D = i * a1 + j * a2;
+                if (sub == 1) r2D += delta;
+
+                double s = arma::dot(r2D, Ch) / arma::dot(Ch, Ch);
+                double t = arma::dot(r2D, T) / arma::dot(T, T);
+
+                if (0.0 <= s && s < 1.0 && 0.0 <= t && t < 1.0) {
+                    // cylindrical coordinates
+                    double theta = 2.0 * M_PI * s;
+                    double x = radius * cos(theta);
+                    double y = radius * sin(theta);
+                    double z = t * T_len;
+
+                    Atom atom;
+                    atom.element = "C";
+                    atom.x = x * angstrom_to_bohr;
+                    atom.y = y * angstrom_to_bohr;
+                    atom.z = z * angstrom_to_bohr;
+
+                    atoms.push_back(atom);
+                }
+            }
+        }
     }
 
     return {atoms, lattice};
@@ -87,7 +89,7 @@ val_exp_coeff get_valence_data(std::string element, std::string orbital_type) {
             data.coeffs = {0.741};
             data.onsite_energy = -20.316;
         } else if (orbital_type == "2p") {
-            data.exps = {0.88, 1.3};
+            data.exps = {1.2, 1.3};
             data.coeffs = {0.640, 0.412};
             data.onsite_energy = -13.670;
             /* 
@@ -395,6 +397,8 @@ void apply_bloch_phase(const std::vector<basis_function> &basis,
             }
         }
     }
+    S_k = 0.5 * (S_k + S_k.st());
+    H_k = 0.5 * (H_k + H_k.st());
 }
 
 
@@ -405,10 +409,10 @@ arma::vec solve_k_eigenvalue(const arma::cx_mat &H_k, const arma::cx_mat &S_k) {
     arma::cx_mat eigvecs;
 
     arma::mat S_real = arma::real(S_k);
-
+    arma::mat S_sym = 0.5 * (S_real + S_real.t());
     arma::cx_mat H_copy = H_k;
 
-    solve_eigenvalue(const_cast<arma::cx_mat&>(H_k), S_real, eigvals, eigvecs);
+    solve_eigenvalue(const_cast<arma::cx_mat&>(H_k), S_sym, eigvals, eigvecs);
 
     return eigvals;
 }
@@ -419,116 +423,27 @@ void compute_band_structure(const std::vector<basis_function> &basis,
                             const std::vector<std::array<double, 3>> &k_path,
                             const std::vector<std::string> &k_labels,
                             double K_eht) {
-    std::ofstream outfile("band_structure.dat");
+    std::ofstream outfile("band_structure_CNT_10_10.dat");
     int N = basis.size();
-    // double fermi_shift = -13.7;  // fermi level shift (eV)
+    double fermi_shift = -2.9;  // fermi level shift (eV)
     arma::cx_mat S_k(N, N), H_k(N, N);
+    
     for (size_t i = 0; i < k_path.size(); ++i) {
-        apply_bloch_phase(basis, lattice, k_path[i], S_k, H_k, K_eht);
+        apply_bloch_phase(basis, lattice, k_path[i], S_k, H_k, K_eht, cutoff_radius_bohr);
+        std::cout << "Step " << i 
+            << ": norm(S_k) = " << arma::norm(S_k)
+            << ", norm(H_k) = " << arma::norm(H_k) << std::endl;
+
         arma::vec energies = solve_k_eigenvalue(H_k, S_k);
 
         outfile << i << " ";
         for (const auto &e : energies) {
-            outfile << e << " ";
+            outfile << e - fermi_shift << " ";
         }
         outfile << std::endl;
     }
     outfile.close();
-    std::cout << "Band structure written to band_structure.dat" << std::endl;
-}
-
-// Define k-path for graphene (M -> Gamma -> K -> M)
-#include <vector>
-#include <array>
-#include <string>
-#include <cmath>
-#include <utility>
-
-std::pair<std::vector<std::array<double, 3>>, std::vector<std::string>>
-get_graphene_k_path(double a_cc, std::vector<double>& k_dist, std::vector<double>& k_ticks) {
-    // 1. Real-space lattice vectors for graphene
-    std::array<double, 3> a1 = {a_cc * 1.5,  a_cc * std::sqrt(3) / 2, 0.0};
-    std::array<double, 3> a2 = {a_cc * 1.5, -a_cc * std::sqrt(3) / 2, 0.0};
-
-    // 2. Reciprocal lattice vectors using cross product
-    double volume = a1[0] * a2[1] - a1[1] * a2[0];  // 2D cross product z-component
-    std::array<double, 3> b1 = {
-        2 * M_PI *  a2[1] / volume,
-        -2 * M_PI * a2[0] / volume,
-        0.0
-    };
-    std::array<double, 3> b2 = {
-        -2 * M_PI * a1[1] / volume,
-        2 * M_PI *  a1[0] / volume,
-        0.0
-    };
-
-    // 3. High-symmetry points
-    std::array<double, 3> Gamma = {0.0, 0.0, 0.0};
-    std::array<double, 3> K = {
-        (b1[0] + b2[0]) / 3,
-        (b1[1] + b2[1]) / 3,
-        0.0
-    };
-    std::array<double, 3> M = {
-        (b1[0]) / 2,
-        (b1[1]) / 2,
-        0.0
-    };
-
-    // 4. Interpolation helper
-    auto interpolate = [](const std::array<double, 3>& start,
-                          const std::array<double, 3>& end,
-                          int n_steps,
-                          std::vector<std::array<double, 3>>& k_path,
-                          std::vector<std::string>& labels,
-                          const std::string& label_start,
-                          std::vector<double>& k_dist,
-                          std::vector<double>& k_ticks,
-                          bool include_last = true) {
-        double accum_dist = k_dist.empty() ? 0.0 : k_dist.back();
-
-        for (int i = 0; i <= n_steps; ++i) {
-            if (i == n_steps && !include_last) break;
-            double t = static_cast<double>(i) / n_steps;
-            std::array<double, 3> k = {
-                (1 - t) * start[0] + t * end[0],
-                (1 - t) * start[1] + t * end[1],
-                0.0
-            };
-            k_path.push_back(k);
-
-            // 누적 거리 계산
-            if (!k_dist.empty()) {
-                const auto& prev = k_path[k_path.size() - 2];
-                double dk = std::sqrt(
-                    std::pow(k[0] - prev[0], 2) +
-                    std::pow(k[1] - prev[1], 2));
-                accum_dist += dk;
-            }
-            k_dist.push_back(accum_dist);
-
-            if (i == 0 && !label_start.empty()) {
-                labels.push_back(label_start);
-                k_ticks.push_back(accum_dist);
-            } else {
-                labels.push_back("");
-            }
-        }
-    };
-
-    // 5. Build path M → Γ → K → M
-    std::vector<std::array<double, 3>> k_path;
-    std::vector<std::string> k_labels;
-    k_dist.clear();
-    k_ticks.clear();
-
-    int n_points = 50;
-    interpolate(M, Gamma, n_points, k_path, k_labels, "M", k_dist, k_ticks);
-    interpolate(Gamma, K, n_points, k_path, k_labels, "Γ", k_dist, k_ticks);
-    interpolate(K, M, n_points, k_path, k_labels, "K", k_dist, k_ticks);
-
-    return {k_path, k_labels};
+    std::cout << "Band structure written to band_structure_CNT_10_10.dat" << std::endl;
 }
 
 
@@ -539,17 +454,26 @@ arma::mat solve_eigenvalue(arma::cx_mat &H,arma::mat &S, arma::vec &eigvals, arm
     arma::vec s_eigvals;
     arma::mat s_eigvecs;
 
-    arma::eig_sym(s_eigvals, s_eigvecs, S); 
+    arma::mat S_sym = 0.5 * (S + S.st());
+    arma::eig_sym(s_eigvals, s_eigvecs, S_sym); 
 
-    // Regularize small eigenvalues to avoid instability
-    /*double eps = 1e-6;
+    //std::cout << "S_eigvals = " << s_eigvals.t() << std::endl;
+    //std::cout << "S_eigvecs = " << s_eigvecs << std::endl;
+    
+    double eps = 1e-6;
+    arma::vec inv_sqrt_vals(s_eigvals.n_elem);
     for (size_t i = 0; i < s_eigvals.n_elem; ++i) {
-        if (s_eigvals(i) < eps) s_eigvals(i) = eps;
-    }*/
+        if (s_eigvals(i) < eps) {
+            std::cout << "[WARNING] S_eigval[" << i << "] = " << s_eigvals(i) << " is too small or negative. Replacing with 0." << std::endl;
+            inv_sqrt_vals(i) = 0.0;
+        } else {
+            inv_sqrt_vals(i) = 1.0 / std::sqrt(s_eigvals(i));
+        }
+    }
+        
 
     // build X = S^(-1/2) = U diag(1/sqrt(sigma)) U^T
     // columns of X will be used to transform the basis so that the overlap matrix becomes the identity
-    arma::vec inv_sqrt_vals = 1.0 / arma::sqrt(s_eigvals);
     arma::mat diag_inv_sqrt = arma::diagmat(inv_sqrt_vals);
     arma::mat X = s_eigvecs * diag_inv_sqrt * s_eigvecs.t();
 
@@ -564,7 +488,7 @@ arma::mat solve_eigenvalue(arma::cx_mat &H,arma::mat &S, arma::vec &eigvals, arm
     // we have orthonormal basis where overlap is the identity
     arma::cx_mat H_prime = X.t() * H * X;
 
-    H_prime = 0.5 * (H_prime + H_prime.t());  // make it symmetric (Hermitian)
+    H_prime = 0.5 * (H_prime + H_prime.st());  // make it symmetric (Hermitian)
 
     // solve standard eigenvalue problem for H'
     arma::vec tmp_eigvals;

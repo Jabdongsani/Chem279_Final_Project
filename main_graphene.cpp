@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
 
     // Set EHT parameters
     //double K_eht = (atoms[0].element == "C") ? 2.8 : 2.3; // 2.8 for graphene, 2.3 for silicon
-    double K_eht = 2.2;
+    double K_eht = 2.8;
     double cutoff_radius = 9.0 * angstrom_to_bohr; // Angstrom
 
     std::vector<double> k_dist, k_ticks;
